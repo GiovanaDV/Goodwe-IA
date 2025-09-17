@@ -23,7 +23,7 @@ para cada arquivo:
     renomeia a coluna de consumo pra load
     limpa dados ruins faltando
     guarda os dados limpos numa lista
-    mostra 
+    mostra quantos registros foram lidos de cada arquivo
 '''
 lista_dfs = []
 
@@ -52,26 +52,51 @@ for arq in arquivos:
     except Exception as e:
         print(f"⚠️ Erro em {arq}: {e}") # hahha
 
+
+'''
+junta todos os dados dos arquivos em um unico df
+organiza por tempo
+'''
 df = pd.concat(lista_dfs, ignore_index=True)
 df = df.sort_values('time').reset_index(drop=True)
 
 print(f"\n📊 Dataset consolidado: {len(df)} registros de {df['time'].dt.date.nunique()} dias")
 
 
-
-# Supondo que df_dia já tem as colunas ["time", "load"]
+'''
+cria coluna com a hora de cada registro
+calcula o consumo médio na madrugada (standby)
+calcula o limite de standby como o valor que esta no topo dos 90% menores consumos da madrugada
+'''
 df["hora"] = df["time"].dt.hour
 standby = df[df["hora"].between(0, 5)]["load"].mean()
-standby_limite = df[df["hora"].between(0,5)]["load"].quantile(0.9)
+standby_limite = df[df["hora"].between(0,5)]["load"].quantile(0.75)
 
-# Criação do target
-df["deve_desligar"] = ((df["hora"].between(0, 5)) & (df["load"] <= 400)).astype(int)
 
-# Features e target
+'''
+marca para desligar standby (valor 1) se: 
+    for madrugada entre 0h e 5h
+    e o consu,o for menor ou igual a 400W
+caso contrario, marca 0 (manter ligado)
+'''
+df["deve_desligar"] = ((df["load"] <= 400)).astype(int)
+
+
+'''
+separa dados para treinar IA
+X = dados que serao usados para prever (hora e consumo)
+y = a decisao que queremos que o modelo aprenda (desligar ou nao)
+'''
 X = df[["hora", "load"]]
 y = df["deve_desligar"]
 
-# Treino e teste
+
+'''
+treino e teste
+separa parte dos dados pra treino e parte pra teste
+treina modelo pra aprender a decidir quando desligar
+mostra acuracia (percentual de acertos no teste
+'''
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
 modelo = RandomForestClassifier()
 modelo.fit(X_train, y_train)
@@ -79,12 +104,41 @@ modelo.fit(X_train, y_train)
 # Teste de acurácia
 print("Acurácia:", modelo.score(X_test, y_test))
 
+
+'''
+simula uma decisao com valores fixos
+hora = 2h e consumo = 105W
+'''
 # Simulação de decisão
 # Exemplo: hora=2, load=105
 previsao = modelo.predict([[2, 105]])
 print("Ação:", "Desligar standby!" if previsao[0] == 1 else "Manter ligado!")
 
+
+'''
+aplica o modelo pra todos do dataset
+o modelo faz previsao pra todos os registros
+add o resultado "Desligar Standby!" ou "Manter ligado!" em uma nova coluna
+Mostra os primeiros 2000 resultados
+'''
 df["acao_predita"] = modelo.predict(df[["hora", "load"]])
 df["acao_predita"] = df["acao_predita"].map({1: "Desligar standby!", 0: "Manter ligado!"})
 
-print(df[["time", "load", "hora", "acao_predita"]].head(2000))  # Mostra as 20 primeiras decisões
+# Filtra por dia 16 e horas entre 16 e 18
+df_filtrado = df[
+    (df["time"].dt.date == pd.to_datetime("2025-09-16").date()) &
+    (df["hora"].between(10, 12))
+]
+
+print(df_filtrado[["time", "load", "hora", "acao_predita"]])
+
+'''
+testa desligamento com base nos valores de limites 
+150W --> mais seguro (desliga só nos consumos realmente baixos); pode deixar de desligar nos momentos que PODIAM ser em standby
+200W --> ainda seguro, um pouco mais "agressivo"
+250W - 300W --> mais abrangente; pode acabar desligando em momentos que não são standby verdadeiro
+qual seria melhor?
+'''
+for limite in [150, 200, 250, 300]:
+    df["deve_desligar"] = ((df["hora"].between(0, 5)) & (df["load"] <= limite)).astype(int)
+    print(f"Com limite {limite}W, quantidade de desligamentos:", df["deve_desligar"].sum())
