@@ -44,7 +44,7 @@ for arq in arquivos:
         print(f"✅ {os.path.basename(arq)}: {len(df_temp)} registros")
 
     except Exception as e:
-        print(f"⚠️ Erro em {arq}: {e}")
+        print(f"⚠️ Erro em {arq}: {e}") # hahha
 
 df = pd.concat(lista_dfs, ignore_index=True)
 df = df.sort_values('time').reset_index(drop=True)
